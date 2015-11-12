@@ -1,175 +1,384 @@
-
-# coding: utf-8
-
-# # IBM Connections Social Graph
-# Un programme pour visualiser le graph social d'une installation IBM Connections
-# Indiquez les informations de base dans la suite
-
-# In[1]:
-
-# url de votre serveur
-serverUrl = ""
-# votre id utilisateur
-loginId = ""
-# votre mot de passe
-loginPwd = ""
-# le userId de votre profil
-loginUserId = ""
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
 
 # dépendances
 import requests
 import xml.dom.minidom
-import feedparser
+import sys
+import signal
+import os
+import getopt
+from queue import Queue
+from threading import Thread
+import time
+import curses
 
-# data structure
-relations = []
-knownUserIds = set()
-unknownUserIds = set()
-usersDetails = set()
+class SetQueue(Queue):
 
-# get userId relations
-def getUserRelations(userId):
-    # local variables
-    userIds = []
-    # get raw xml
-    param = { 'userid' : userId, 'connectionType' : 'colleague', 'ps' : '250'}
-    while True:
-        try:
-            r = requests.get('http://' + serverUrl + '/profiles/atom/connections.do', params=param, auth=(loginId,loginPwd))
-        except:
-            continue
-        break
-    # parse xml
-    try:
-        dom = xml.dom.minidom.parseString(r.text)
-    except:
-        return True
-    feed = dom.firstChild
-    entries = feed.getElementsByTagName('entry')
-    for entry in entries:
-        # get author user id
-        author = entry.getElementsByTagName('author')[0]
-        try:
-            authorName = author.getElementsByTagName('name')[0]
-            authorName = authorName.firstChild.data
-        except:
-            authorName = ""
-        try:
-            authorEMail = author.getElementsByTagName('email')[0]
-            authorEMail = authorEMail.firstChild.data
-        except:
-            authorEMail = ""
-        authorUserId = author.getElementsByTagName('snx:userid')[0]
-        # get contributor user id
-        contributor = entry.getElementsByTagName('contributor')[0]
-        try:
-            contribName = contributor.getElementsByTagName('name')[0]
-            contribName = contribName.firstChild.data
-        except:
-            contribName = ""
-        try:
-            contribEMail = contributor.getElementsByTagName('email')[0]
-            contribEMail = contribEMail.firstChild.data
-        except:
-            contribEMail = ""
-        contribUserId = contributor.getElementsByTagName('snx:userid')[0]
-        # add them to data structure
-        relations.append(authorUserId.firstChild.data + ',' + contribUserId.firstChild.data)
-        unknownUserIds.add(authorUserId.firstChild.data)
-        unknownUserIds.add(contribUserId.firstChild.data)
-        # add user datail to usersDetails set
-        usersDetails.add(authorUserId.firstChild.data + ',' + authorName + ',' + authorEMail)
-        usersDetails.add(contribUserId.firstChild.data + ',' + contribName + ',' + contribEMail)
-    
-    # add it to the knownUserIds set
-    knownUserIds.add(userId)
-    # remove already known user from unknownUserIds
-    tmp = set(knownUserIds)
-    for index, item in enumerate(tmp):
-        if item in unknownUserIds:
-            unknownUserIds.remove(item)
-    
-# get all relations of a set of userIds
-def getAllRelations(setUserIds):
-    while len(setUserIds) > 0:
-        print ("still " + str(len(setUserIds)) + " to go.")
-        tmpUserToCheck = set(setUserIds)
-        for index, item in enumerate(tmpUserToCheck):
-            print (index, end="\r")
-            try:
-                getUserRelations(item)
-            except:
-                continue
-            
-# search for userIds
-def searchUserIds(search):
-    # local variables
-    nbPage = 0
-    ps = 250
-    # first page
-    # requète
-    while True:
-        try:
-            r = requests.get('http://' + serverUrl + '/profiles/atom/search.do?search=' + search + '*&ps=' + str(ps), auth=(loginId, loginPwd))
-        except:
-            continue
-        break
-    dom = xml.dom.minidom.parseString(r.text)
-    feed = dom.firstChild
-    totalResult = feed.getElementsByTagName('opensearch:totalResults')[0]
-    totalResult = int(totalResult.firstChild.data)
-    print (str(totalResult))
-    if totalResult > ps:
-        nbPage = int(float(totalResult) / ps) + 1
-    else:
-        nbPage = 1
-    
-    fundUserIds = feed.getElementsByTagName('snx:userid')
-    ls = []
-    for index, item in enumerate(fundUserIds):
-        ls.append(item.firstChild.data)
-    unknownUserIds.union(set(ls))
-        
-    
-    # rest of the pages
-    if nbPage > 1:
-        for p in range(2,nbPage,1):
-            # requète
-            while True:
-                try:
-                    r = requests.get('http://' + serverUrl + '/profiles/atom/search.do?search=' + search + '*&ps=' + str(ps) + '&page=' + str(p), auth=(loginId, loginPwd))
-                except:
-                    continue
-                break
-            print ('page ' + str(p) + '/' + str(nbPage), end="\r")
-            # parse
-            dom = xml.dom.minidom.parseString(r.text)
-            feed = dom.firstChild
-            fundUserIds = feed.getElementsByTagName('snx:userid')
-            for index, item in enumerate(fundUserIds):
-                unknownUserIds.add(item.firstChild.data)
-    
+    def _init(self, maxsize):
+        Queue._init(self, maxsize) 
+        self.all_items = set()
 
-# write data
-def writeUserDetails(mySet):
-    f = open("usersDetails.csv","w")
-    f.write("Id,Label,eMail\n")
-    for line in mySet:
-        f.write(line + '\n')
-    f.close()
+    def _put(self, item):
+        if item not in self.all_items:
+            Queue._put(self, item) 
+            self.all_items.add(item)
 
-def writeRelations(myList):
-    f = open("usersRelations.csv","w")
-    f.write("Source,Target\n")
-    for line in myList:
-        f.write(line + '\n')
-    f.close()
+def signal_handler(signal, frame):
+	print('You pressed Ctrl+C!')
+	curses.endwin()
+	sys.exit(0)
 
-# run code
-# init
-searchUserIds("a")
-# get all relations
-getAllRelations(unknownUserIds)
-# write down data in csv (for use in gephi)
-writeUserDetails(usersDetails)
-writeRelations(relations)
+def usage():
+	"""usage de la ligne de commande"""
+	print ("usage : " + sys.argv[0] + "-h --help -s --server someurl.com -u --user login -p --password password")
+
+def getAtomFeed(url, login, pwd):
+	# var
+	MAX_TRY = 10
+	essai = 0
+
+	# get atom document
+	while essai < MAX_TRY:
+		try:
+			r = requests.get('http://' + url, auth=(login,pwd), timeout=10)
+		except:
+			essai += 1
+			continue
+		break
+	else:
+		raise ('Erreur lors de la requête')
+
+	# parse atom document
+	try:
+		dom = xml.dom.minidom.parseString(r.text)
+	except:
+		raise ('Erreur lors du parsing du document Atom')
+
+	return dom
+
+# def getUserRelations(atomFeed):
+# 	# var
+# 	relations = []
+# 	# get feed
+# 	feed = atomFeed.firstChild
+# 	# get entries and start parse them
+# 	entries = feed.getElementsByTagName('entry')
+# 	for entry in entries:
+# 		# get author user id
+# 		author = entry.getElementsByTagName('author')[0]
+# 		try:
+# 			authorUserId = author.getElementsByTagName('snx:userid')[0]
+# 			authorUserId = authorUserId.firstChild.data
+# 		except:
+# 			continue
+		
+# 		contributor = entry.getElementsByTagName('contributor')[0]
+# 		try:
+# 			contribUserId = contributor.getElementsByTagName('snx:userid')[0]
+# 			contribUserId = contribUserId.firstChild.data
+# 		except:
+# 			continue
+# 		# append relation to list	
+# 		relations.append(authorUserId + ',' + contribUserId)
+# 	# return relations
+# 	return relations
+
+# def getUserInfoFromSearch(atomFeed):
+# 	# var
+# 	usersInfos = []
+# 	# parse feed
+# 	feed = atomFeed.firstChild    
+# 	userIds = feed.getElementsByTagName('snx:userid')
+# 	# put userid in list
+# 	for index, item in enumerate(userIds):
+# 		usersInfos.append(item.firstChild.data)
+# 	# return list
+# 	return usersInfos
+
+# def writeUserIdList(fileName, theList):
+# 	f = open(fileName + ".csv","w")
+# 	for line in theList:
+# 		f.write(line + '\n')
+# 	f.close()
+
+# def writeUsersInfos(fileName, theList):
+# 	f = open(fileName + ".csv","w")
+# 	f.write("Id,Label,eMail\n")
+# 	for line in theList:
+# 		f.write(line + '\n')
+# 	f.close()
+
+# def writeUsersRelations(fileName, theList):
+# 	f = open(fileName + ".csv","w")
+# 	f.write("Source,Target\n")
+# 	for line in theList:
+# 		f.write(line + '\n')
+# 	f.close()
+
+def getManagerInfo(atomFeed):
+	try:
+		entries = atomFeed.getElementsByTagName('entry')[1]
+	except:
+		return None
+	try:
+		managerId = entries.getElementsByTagName('snx:userid')[0]
+		return managerId.firstChild.data
+	except:
+		return None
+
+def buildUrlSearchList(server, login, pwd, q):
+	# var
+	alphabet = ['a','b','c','d','e','f','g','h','i','j','k','l','m','n','o','p','q','r','s','t','u','v','w','x','y','z']
+	#alphabet = ['a']
+	for i in alphabet:
+		url = server + '/profiles/atom/search.do?search=' + i + '*&ps=250'
+		dom = getAtomFeed(url, login, pwd)
+		totalResult = dom.getElementsByTagName('opensearch:totalResults')[0]
+		totalResult = int(totalResult.firstChild.data)
+		if totalResult > 250:
+			nbPage = int(float(totalResult) / 250) + 1
+			for n in range(1,nbPage,1):
+				item = url + "&page=" + str(n) 
+				q.put(item)
+		else:
+			nbPage = 1
+			q.put(url)
+
+def getUserIdsWorker(login, pwd, qin, qout):
+	while True:
+		url = qin.get()
+		if url == None:
+			break
+		qin.task_done()
+		try:
+			dom = getAtomFeed(url, login, pwd)
+		except:
+			continue
+		userIds = dom.getElementsByTagName('snx:userid')
+		for index, item, in enumerate(userIds):
+			qout.put(item.firstChild.data)
+
+
+def getRelationsWorker(server, login, pwd, qin, qout, getManager, qmgmt):
+	while True:
+		userid = qin.get()
+		if userid == None:
+			break
+		qin.task_done()
+		url = server + '/profiles/atom/connections.do?userid=' + userid + '&connectionType=colleague&ps=250'
+		try:
+			dom = getAtomFeed(url, login, pwd)
+		except:
+			continue
+		feed = dom.firstChild
+		entries = feed.getElementsByTagName('entry')
+		for entry in entries:
+			# get date
+			dateRelation = entry.getElementsByTagName('updated')[0]
+			dateRelation = dateRelation.firstChild.data
+			dateRelation = dateRelation[:10]
+			# get author user id
+			author = entry.getElementsByTagName('author')[0]
+			try:
+				authorName = author.getElementsByTagName('name')[0]
+				authorName = authorName.firstChild.data
+			except:
+				authorName = ""
+			try:
+				authorEMail = author.getElementsByTagName('email')[0]
+				authorEMail = authorEMail.firstChild.data
+			except:
+				authorEMail = ""
+			authorUserId = author.getElementsByTagName('snx:userid')[0]
+			authorUserId = authorUserId.firstChild.data
+
+			# get contributor user id
+			contributor = entry.getElementsByTagName('contributor')[0]
+			try:
+				contribName = contributor.getElementsByTagName('name')[0]
+				contribName = contribName.firstChild.data
+			except:
+				contribName = ""
+			try:
+				contribEMail = contributor.getElementsByTagName('email')[0]
+				contribEMail = contribEMail.firstChild.data
+			except:
+				contribEMail = ""
+			contribUserId = contributor.getElementsByTagName('snx:userid')[0]
+			contribUserId = contribUserId.firstChild.data
+
+			# build dict
+			authorInfo = { "userid" : authorUserId, "name" : authorName, "email" : authorEMail }
+			contribInfo = { "userid" : contribUserId, "name" : contribName, "email" : contribEMail }
+			relation = "\"" + authorUserId + "\",\"" + contribUserId + "\",\"<(" + str(dateRelation) + ",Infinity)>\""
+			qout.put(authorInfo)
+			qout.put(contribInfo)
+			qout.put(relation)
+
+		# get manager
+		if getManager == True:
+			url = server + "/profiles/atom/reportingChain.do?userid=" + userid
+			rc = getAtomFeed(url, login, pwd)
+			managerId = getManagerInfo(rc)
+			if managerId is not None:
+				reportingChain = str(userid) + "," + str(managerId)
+				qmgmt.put(reportingChain)
+			
+
+def printStatusThread(screen, q0, q1, q2, q3):
+	strtime = time.time()
+	while True:
+		elapsed = time.time() - strtime
+		screen.clear()
+		screen.addstr(0,20,time.strftime("%H:%M:%S", time.gmtime(elapsed)))
+		screen.addstr(0,0,"url Queue : " + str(q0.qsize()))
+		screen.addstr(1,0,"userId Queue : " + str(q1.qsize()))
+		screen.addstr(2,0,"user info Queue : " + str(q2.qsize()))
+		screen.addstr(3,0,"user manager Queue : " + str(q3.qsize()))
+		screen.refresh()
+		time.sleep(1)
+
+def writeFileThread(usersFilename, relationsFilename, qin):
+	# file for user details
+	u = open(usersFilename + ".csv", "w")
+	u.write("Id,Label,eMail\n")
+	# file for relations
+	r = open(relationsFilename + ".csv", "w")
+	r.write("Source,Target,Time Interval\n")	
+	
+	doneUsers = []
+	while True:
+		data = qin.get()
+		if data == None:
+			break
+		# write data
+		if type(data) is dict:
+			string = str(data["userid"]) + ',' + str(data["name"]) + ',' + str(data["email"])
+			if string not in doneUsers:
+				u.write(string + "\n")
+				doneUsers.append(string)
+		elif type(data) is str:
+			r.write(str(data) + "\n")
+		qin.task_done()
+
+def writeManagerFileThread(managerFilename, qin):
+	m = open(managerFilename + ".csv", "w")
+	m.write("Source,Target\n")
+	while True:
+		data = qin.get()
+		if data == None:
+			break
+		m.write(str(data) + "\n")
+		qin.task_done()
+		
+
+def main(argv):
+	# global
+	serverUrl = ""
+	login = ""
+	pwd = ""
+	getManager = False
+	urlQueue = SetQueue(maxsize=5000)
+	userIdsQueue = SetQueue(maxsize=5000)
+	userInfosQueue = Queue(maxsize=5000)
+	userManagerQueue = Queue(maxsize=5000)
+
+	#curse
+	stdscr = curses.initscr()
+	curses.noecho()
+	curses.cbreak()
+	stdscr.clear()
+
+	# signal handler
+	signal.signal(signal.SIGINT, signal_handler)
+
+	# retrive arguments
+	try:
+		opts, args = getopt.getopt(argv, "hs:u:p:m", ["help", "server=", "user=", "password=", "manager"])
+		for opt, arg in opts:
+			if opt in ("-h", "--help"):
+				usage()
+				sys.exit()
+			elif opt in ("-s", "--server"):
+				serverUrl = arg
+			elif opt in ("-u", "--user"):
+				login = arg
+			elif opt in ("-p", "--password"):
+				pwd = arg
+			elif opt in ("-m", "--manager"):
+				getManager = True
+	except:
+		usage()
+		sys.exit()
+
+	# threading get userinfo worker
+	userIdWorker = []
+	for i in range(10):
+		w1 = Thread(target=getUserIdsWorker, args=(login, pwd, urlQueue, userIdsQueue,))
+		w1.setDaemon(True)
+		w1.start()
+		userIdWorker.append(w1)
+
+	# threading get relations worker
+	userInfoWorker = []
+	for i in range(20):
+		w2 = Thread(target=getRelationsWorker, args=(serverUrl, login, pwd, userIdsQueue, userInfosQueue, getManager, userManagerQueue,))
+		w2.setDaemon(True)
+		w2.start()
+		userInfoWorker.append(w2)
+
+	# thread to print size of queue
+	w3 = Thread(target=printStatusThread, args=(stdscr, urlQueue, userIdsQueue, userInfosQueue, userManagerQueue,))
+	w3.setDaemon(True)
+	w3.start()
+
+	# thread to write files
+	w4 = Thread(target=writeFileThread, args=("users", "relations", userInfosQueue,))
+	w4.setDaemon(True)
+	w4.start()
+
+	if getManager == True:
+		w5 = Thread(target=writeManagerFileThread, args=("manager", userManagerQueue,))
+		w5.setDaemon(True)
+		w5.start()
+
+	# build Queue url list
+	MAX_TRY = 10
+	essai = 0
+	while essai < MAX_TRY:
+		try:
+			buildUrlSearchList(serverUrl, login, pwd, urlQueue)
+		except KeyboardInterrupt:
+			break
+		except:
+			essai += 1
+			continue
+		break
+
+	while not (urlQueue.empty() and userIdsQueue.empty() and userInfosQueue.empty()):
+		pass
+
+	print ("end threads")
+	urlQueue.put(None)
+	userIdsQueue.put(None)
+	userInfosQueue.put(None)
+
+	# end of workers
+	for i in userIdWorker:
+		i.join()
+	for i in userInfoWorker:
+		i.join()
+
+	w3.join()
+	w4.join()
+	w5.join()
+
+	curses.endwin()
+
+	sys.exit(0)
+
+
+if __name__ == '__main__':
+	main(sys.argv[1:])
+
