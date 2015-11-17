@@ -11,7 +11,6 @@ import getopt
 from queue import Queue
 from threading import Thread
 import time
-import curses
 
 class SetQueue(Queue):
 
@@ -26,7 +25,6 @@ class SetQueue(Queue):
 
 def signal_handler(signal, frame):
 	print('You pressed Ctrl+C!')
-	curses.endwin()
 	sys.exit(0)
 
 def usage():
@@ -56,65 +54,6 @@ def getAtomFeed(url, login, pwd):
 		raise ('Erreur lors du parsing du document Atom')
 
 	return dom
-
-# def getUserRelations(atomFeed):
-# 	# var
-# 	relations = []
-# 	# get feed
-# 	feed = atomFeed.firstChild
-# 	# get entries and start parse them
-# 	entries = feed.getElementsByTagName('entry')
-# 	for entry in entries:
-# 		# get author user id
-# 		author = entry.getElementsByTagName('author')[0]
-# 		try:
-# 			authorUserId = author.getElementsByTagName('snx:userid')[0]
-# 			authorUserId = authorUserId.firstChild.data
-# 		except:
-# 			continue
-		
-# 		contributor = entry.getElementsByTagName('contributor')[0]
-# 		try:
-# 			contribUserId = contributor.getElementsByTagName('snx:userid')[0]
-# 			contribUserId = contribUserId.firstChild.data
-# 		except:
-# 			continue
-# 		# append relation to list	
-# 		relations.append(authorUserId + ',' + contribUserId)
-# 	# return relations
-# 	return relations
-
-# def getUserInfoFromSearch(atomFeed):
-# 	# var
-# 	usersInfos = []
-# 	# parse feed
-# 	feed = atomFeed.firstChild    
-# 	userIds = feed.getElementsByTagName('snx:userid')
-# 	# put userid in list
-# 	for index, item in enumerate(userIds):
-# 		usersInfos.append(item.firstChild.data)
-# 	# return list
-# 	return usersInfos
-
-# def writeUserIdList(fileName, theList):
-# 	f = open(fileName + ".csv","w")
-# 	for line in theList:
-# 		f.write(line + '\n')
-# 	f.close()
-
-# def writeUsersInfos(fileName, theList):
-# 	f = open(fileName + ".csv","w")
-# 	f.write("Id,Label,eMail\n")
-# 	for line in theList:
-# 		f.write(line + '\n')
-# 	f.close()
-
-# def writeUsersRelations(fileName, theList):
-# 	f = open(fileName + ".csv","w")
-# 	f.write("Source,Target\n")
-# 	for line in theList:
-# 		f.write(line + '\n')
-# 	f.close()
 
 def getManagerInfo(atomFeed):
 	try:
@@ -226,17 +165,15 @@ def getRelationsWorker(server, login, pwd, qin, qout, getManager, qmgmt):
 				qmgmt.put(reportingChain)
 			
 
-def printStatusThread(screen, q0, q1, q2, q3):
+def printStatusThread(q0, q1, q2, q3):
 	strtime = time.time()
 	while True:
-		elapsed = time.time() - strtime
-		screen.clear()
-		screen.addstr(0,20,time.strftime("%H:%M:%S", time.gmtime(elapsed)))
-		screen.addstr(0,0,"url Queue : " + str(q0.qsize()))
-		screen.addstr(1,0,"userId Queue : " + str(q1.qsize()))
-		screen.addstr(2,0,"user info Queue : " + str(q2.qsize()))
-		screen.addstr(3,0,"user manager Queue : " + str(q3.qsize()))
-		screen.refresh()
+		sys.stdout.write('\r\x1b[K')
+		sys.stdout.write("urls:" + str(q0.qsize()) + " | ")
+		sys.stdout.write("userids:" + str(q1.qsize()) + " | ")
+		sys.stdout.write("user infos:" + str(q2.qsize()) + " | ")
+		sys.stdout.write("manager infos:" + str(q3.qsize()))
+		sys.stdout.flush()
 		time.sleep(1)
 
 def writeFileThread(usersFilename, relationsFilename, qin):
@@ -284,12 +221,6 @@ def main(argv):
 	userInfosQueue = Queue(maxsize=5000)
 	userManagerQueue = Queue(maxsize=5000)
 
-	#curse
-	stdscr = curses.initscr()
-	curses.noecho()
-	curses.cbreak()
-	stdscr.clear()
-
 	# signal handler
 	signal.signal(signal.SIGINT, signal_handler)
 
@@ -329,7 +260,7 @@ def main(argv):
 		userInfoWorker.append(w2)
 
 	# thread to print size of queue
-	w3 = Thread(target=printStatusThread, args=(stdscr, urlQueue, userIdsQueue, userInfosQueue, userManagerQueue,))
+	w3 = Thread(target=printStatusThread, args=(urlQueue, userIdsQueue, userInfosQueue, userManagerQueue,))
 	w3.setDaemon(True)
 	w3.start()
 
@@ -370,11 +301,7 @@ def main(argv):
 	for i in userInfoWorker:
 		i.join()
 
-	w3.join()
-	w4.join()
-	w5.join()
-
-	curses.endwin()
+	time.sleep(5)
 
 	sys.exit(0)
 
