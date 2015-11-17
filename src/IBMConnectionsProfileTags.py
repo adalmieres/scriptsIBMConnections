@@ -11,8 +11,6 @@ import getopt
 from queue import Queue
 from threading import Thread
 import time
-if os.name != "nt":
-	import curses
 
 class SetQueue(Queue):
 
@@ -27,7 +25,6 @@ class SetQueue(Queue):
 
 def signal_handler(signal, frame):
 	print('You pressed Ctrl+C!')
-	curses.endwin()
 	sys.exit(0)
 
 def usage():
@@ -142,17 +139,15 @@ def getTagsWorker(server, login, pwd, qin, qout):
 			for i in range(0,freq):
 				qout.put(term)
 
-def printStatusThread(screen, q0, q1, q2, q3):
+def printStatusThread(q0, q1, q2, q3):
 	strtime = time.time()
 	while True:
-		elapsed = time.time() - strtime
-		screen.clear()
-		screen.addstr(0,20,time.strftime("%H:%M:%S", time.gmtime(elapsed)))
-		screen.addstr(0,0,"url Queue : " + str(q0.qsize()))
-		screen.addstr(1,0,"userId Queue : " + str(q1.qsize()))
-		screen.addstr(2,0,"user info Queue : " + str(q2.qsize()))
-		screen.addstr(3,0,"user manager Queue : " + str(q3.qsize()))
-		screen.refresh()
+		sys.stdout.write('\r\x1b[K')
+		sys.stdout.write("urls:" + str(q0.qsize()) + " | ")
+		sys.stdout.write("userids:" + str(q1.qsize()) + " | ")
+		sys.stdout.write("targetKey:" + str(q2.qsize()) + " | ")
+		sys.stdout.write("tags:" + str(q3.qsize()))
+		sys.stdout.flush()
 		time.sleep(1)
 
 def writeFileThread(tagsFilename, qin):
@@ -160,6 +155,8 @@ def writeFileThread(tagsFilename, qin):
 	t = open(tagsFilename + ".csv", "w")
 	while True:
 		data = qin.get()
+		if data is None:
+			break
 		# write data
 		t.write(data + "\n")
 		qin.task_done()
@@ -171,16 +168,9 @@ def main(argv):
 	pwd = ""
 	getManager = False
 	urlQueue = SetQueue(maxsize=5000)
-	userIdsQueue = SetQueue(maxsize=10000)
+	userIdsQueue = SetQueue(maxsize=5000)
 	userTargetQueue = Queue(maxsize=5000)
 	userTagsQueue = Queue(maxsize=5000)
-
-	#curse
-	if os.name != "nt":
-		stdscr = curses.initscr()
-		curses.noecho()
-		curses.cbreak()
-		stdscr.clear()
 
 	# signal handler
 	signal.signal(signal.SIGINT, signal_handler)
@@ -228,11 +218,10 @@ def main(argv):
 		workers.append(w)
 
 	# thread to print size of queue
-	if os.name != "nt":
-		w = Thread(target=printStatusThread, args=(stdscr, urlQueue, userIdsQueue, userTargetQueue, userTagsQueue,))
-		w.setDaemon(True)
-		w.start()
-		workers.append(w)
+	w = Thread(target=printStatusThread, args=(urlQueue, userIdsQueue, userTargetQueue, userTagsQueue,))
+	w.setDaemon(True)
+	w.start()
+	workers.append(w)
 
 	# thread to write files
 	w = Thread(target=writeFileThread, args=("tags", userTagsQueue,))
@@ -254,18 +243,28 @@ def main(argv):
 		break
 
 	time.sleep(1)
-		
 	while not (urlQueue.empty() and userIdsQueue.empty() and userTargetQueue.empty() and userTagsQueue.empty()):
-		print("url : " + str(urlQueue.qsize()))
-		print("ids : " + str(userIdsQueue.qsize()))
-		print("target : " + str(userTargetQueue.qsize()))
-		print("tags : " + str(userTagsQueue.qsize()))
-		time.sleep(1)
+		pass
 
 	print ("end threads")
 	urlQueue.put(None)
 	userIdsQueue.put(None)
-	userInfosQueue.put(None)
+	userTargetQueue.put(None)
+	userTagsQueue.put(None)
+	
+	# print word cloud
+	from os import path
+	from wordcloud import WordCloud
+	
+	d = path.dirname(__file__)
+	
+	tags = open(path.join(d, "tags.csv"))
+	
+	print (str(tags))
+	
+	wordCloud = WordCloud(width=1920, height=1080, max_words=10000, max_font_size=40).generate(str(tags))
+	image = wordCloud.to_image()
+	image.show()
 
 	# end of workers
 	for i in userIdWorker:
@@ -276,9 +275,6 @@ def main(argv):
 	w3.join()
 	w4.join()
 	w5.join()
-
-	if os.name != "nt":
-		curses.endwin()
 
 	sys.exit(0)
 
