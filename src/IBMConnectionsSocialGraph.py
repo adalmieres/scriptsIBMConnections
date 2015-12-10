@@ -31,7 +31,7 @@ def usage():
 	"""usage de la ligne de commande"""
 	print ("usage : " + sys.argv[0] + "-h --help -s --server someurl.com -u --user login -p --password password")
 
-def getAtomFeed(url, login, pwd):
+def getAtomFeed(url, httpSession):
 	# var
 	MAX_TRY = 10
 	essai = 0
@@ -39,7 +39,7 @@ def getAtomFeed(url, login, pwd):
 	# get atom document
 	while essai < MAX_TRY:
 		try:
-			r = requests.get('http://' + url, auth=(login,pwd), timeout=10)
+			r = httpSession.get('http://' + url, timeout=10)
 		except:
 			essai += 1
 			continue
@@ -66,13 +66,13 @@ def getManagerInfo(atomFeed):
 	except:
 		return None
 
-def buildUrlSearchList(server, login, pwd, q):
+def buildUrlSearchList(server, httpSession, q):
 	# var
 	alphabet = ['a','b','c','d','e','f','g','h','i','j','k','l','m','n','o','p','q','r','s','t','u','v','w','x','y','z']
 	#alphabet = ['a']
 	for i in alphabet:
 		url = server + '/profiles/atom/search.do?search=' + i + '*&ps=250'
-		dom = getAtomFeed(url, login, pwd)
+		dom = getAtomFeed(url, httpSession)
 		totalResult = dom.getElementsByTagName('opensearch:totalResults')[0]
 		totalResult = int(totalResult.firstChild.data)
 		if totalResult > 250:
@@ -84,14 +84,14 @@ def buildUrlSearchList(server, login, pwd, q):
 			nbPage = 1
 			q.put(url)
 
-def getUserIdsWorker(login, pwd, qin, qout):
+def getUserIdsWorker(httpSession, qin, qout):
 	while True:
 		url = qin.get()
 		if url == None:
 			break
 		qin.task_done()
 		try:
-			dom = getAtomFeed(url, login, pwd)
+			dom = getAtomFeed(url, httpSession)
 		except:
 			continue
 		userIds = dom.getElementsByTagName('snx:userid')
@@ -99,7 +99,7 @@ def getUserIdsWorker(login, pwd, qin, qout):
 			qout.put(item.firstChild.data)
 
 
-def getRelationsWorker(server, login, pwd, qin, qout, getManager, qmgmt):
+def getRelationsWorker(server, httpSession, qin, qout, getManager, qmgmt):
 	while True:
 		userid = qin.get()
 		if userid == None:
@@ -107,7 +107,7 @@ def getRelationsWorker(server, login, pwd, qin, qout, getManager, qmgmt):
 		qin.task_done()
 		url = server + '/profiles/atom/connections.do?userid=' + userid + '&connectionType=colleague&ps=250'
 		try:
-			dom = getAtomFeed(url, login, pwd)
+			dom = getAtomFeed(url, httpSession)
 		except:
 			continue
 		feed = dom.firstChild
@@ -158,7 +158,7 @@ def getRelationsWorker(server, login, pwd, qin, qout, getManager, qmgmt):
 		# get manager
 		if getManager == True:
 			url = server + "/profiles/atom/reportingChain.do?userid=" + userid
-			rc = getAtomFeed(url, login, pwd)
+			rc = getAtomFeed(url, httpSession)
 			managerId = getManagerInfo(rc)
 			if managerId is not None:
 				reportingChain = str(userid) + "," + str(managerId)
@@ -188,6 +188,8 @@ def writeFileThread(usersFilename, relationsFilename, qin):
 	while True:
 		data = qin.get()
 		if data == None:
+			u.flush()
+			r.flush()
 			break
 		# write data
 		if type(data) is dict:
@@ -227,6 +229,9 @@ def main(argv):
 	# retrive arguments
 	try:
 		opts, args = getopt.getopt(argv, "hs:u:p:m", ["help", "server=", "user=", "password=", "manager"])
+		if len(argv) == 0:
+			usage()
+			sys.exit()
 		for opt, arg in opts:
 			if opt in ("-h", "--help"):
 				usage()
@@ -243,10 +248,14 @@ def main(argv):
 		usage()
 		sys.exit()
 
+	# set http session
+	s = requests.Session()
+	s.auth = (login,pwd)
+
 	# threading get userinfo worker
 	userIdWorker = []
 	for i in range(10):
-		w1 = Thread(target=getUserIdsWorker, args=(login, pwd, urlQueue, userIdsQueue,))
+		w1 = Thread(target=getUserIdsWorker, args=(s, urlQueue, userIdsQueue,))
 		w1.setDaemon(True)
 		w1.start()
 		userIdWorker.append(w1)
@@ -254,7 +263,7 @@ def main(argv):
 	# threading get relations worker
 	userInfoWorker = []
 	for i in range(20):
-		w2 = Thread(target=getRelationsWorker, args=(serverUrl, login, pwd, userIdsQueue, userInfosQueue, getManager, userManagerQueue,))
+		w2 = Thread(target=getRelationsWorker, args=(serverUrl, s, userIdsQueue, userInfosQueue, getManager, userManagerQueue,))
 		w2.setDaemon(True)
 		w2.start()
 		userInfoWorker.append(w2)
@@ -279,7 +288,7 @@ def main(argv):
 	essai = 0
 	while essai < MAX_TRY:
 		try:
-			buildUrlSearchList(serverUrl, login, pwd, urlQueue)
+			buildUrlSearchList(serverUrl, s, urlQueue)
 		except KeyboardInterrupt:
 			break
 		except:

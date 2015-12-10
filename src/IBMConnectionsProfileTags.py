@@ -11,6 +11,8 @@ import getopt
 from queue import Queue
 from threading import Thread
 import time
+from wordcloud import WordCloud
+from PIL.Image import core as _imaging
 
 class SetQueue(Queue):
 
@@ -252,17 +254,14 @@ def main(argv):
 	userTargetQueue.put(None)
 	userTagsQueue.put(None)
 	
-	# print word cloud
-	from os import path
-	from wordcloud import WordCloud
+	# print word cloud	
+	d = os.path.dirname(__file__)
 	
-	d = path.dirname(__file__)
-	
-	tags = open(path.join(d, "tags.csv"))
+	tags = open(os.path.join(d, "tags.csv"))
 	
 	print (str(tags))
 	
-	wordCloud = WordCloud(width=1920, height=1080, max_words=10000, max_font_size=40).generate(str(tags))
+	wordCloud = WordCloud(font_path="/usr/share/fonts/truetype/ubuntu-font-family/UbuntuMono-B.ttf", width=1920, height=1080, max_words=10000, max_font_size=40).generate(str(tags))
 	image = wordCloud.to_image()
 	image.show()
 
