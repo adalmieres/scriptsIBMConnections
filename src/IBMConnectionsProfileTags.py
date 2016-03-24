@@ -158,7 +158,10 @@ def writeFileThread(tagsFilename, qin):
 		if data is None:
 			break
 		# write data
-		t.write(data + "\n")
+		try:
+			t.write(data + "\n")
+		except:
+			continue
 		qin.task_done()
 
 def main(argv):

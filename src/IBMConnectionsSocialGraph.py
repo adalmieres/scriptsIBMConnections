@@ -188,6 +188,10 @@ def writeFileThread(usersFilename, relationsFilename, qin):
 	while True:
 		data = qin.get()
 		if data == None:
+			u.flush()
+			r.flush()
+			u.close()
+			r.close()
 			break
 		# write data
 		if type(data) is dict:
